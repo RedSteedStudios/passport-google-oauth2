@@ -1,0 +1,182 @@
+From 5b3f943ce340052d04e47b667951f7c00f8e8fb6 Mon Sep 17 00:00:00 2001
+From: Samuel Attard <samuel.r.attard@gmail.com>
+Date: Fri, 21 Dec 2018 13:24:28 +1300
+Subject: [PATCH 1/5] fix: handle new userinfo endpoint
+
+* `email_verified` can now be `verified_email`
+* `sub` is now `id`
+---
+ lib/profile/openid.js | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/lib/profile/openid.js b/lib/profile/openid.js
+index 2056feb..835d725 100644
+--- a/lib/profile/openid.js
++++ b/lib/profile/openid.js
+@@ -23,14 +23,14 @@ exports.parse = function(json) {
+   }
+   
+   var profile = {};
+-  profile.id = json.sub;
++  profile.id = json.sub || json.id;
+   profile.displayName = json.name;
+   if (json.family_name || json.given_name) {
+     profile.name = { familyName: json.family_name,
+                      givenName: json.given_name };
+   }
+   if (json.email) {
+-    profile.emails = [ { value: json.email, verified: json.email_verified } ];
++    profile.emails = [ { value: json.email, verified: json.email_verified || json.verified_email } ];
+   }
+   if (json.picture) {
+     profile.photos = [{ value: json.picture }];
+
+From 2ecfd1e2335451a64ac0678a23ed313707fc24f4 Mon Sep 17 00:00:00 2001
+From: Samuel Attard <samuel.r.attard@gmail.com>
+Date: Fri, 21 Dec 2018 13:31:01 +1300
+Subject: [PATCH 2/5] spec: add tests for new userinfo style
+
+---
+ test/fixtures/userinfo/userinfo-with-id.json  |  8 +++++
+ .../userinfo-with-verified-email.json         | 10 ++++++
+ test/profile/openid.test.js                   | 34 +++++++++++++++++++
+ 3 files changed, 52 insertions(+)
+ create mode 100644 test/fixtures/userinfo/userinfo-with-id.json
+ create mode 100644 test/fixtures/userinfo/userinfo-with-verified-email.json
+
+diff --git a/test/fixtures/userinfo/userinfo-with-id.json b/test/fixtures/userinfo/userinfo-with-id.json
+new file mode 100644
+index 0000000..e154dcd
+--- /dev/null
++++ b/test/fixtures/userinfo/userinfo-with-id.json
+@@ -0,0 +1,8 @@
++{
++  "id": "111111111111111111112",
++  "name": "",
++  "given_name": "",
++  "family_name": "",
++  "picture": "https://lh3.googleusercontent.com/-XxXXxxXxXXX/AAAAAAAAAAI/AAAAAAAAAAA/0000xxxxx0X/photo.jpg"
++}
++
+diff --git a/test/fixtures/userinfo/userinfo-with-verified-email.json b/test/fixtures/userinfo/userinfo-with-verified-email.json
+new file mode 100644
+index 0000000..6b99efc
+--- /dev/null
++++ b/test/fixtures/userinfo/userinfo-with-verified-email.json
+@@ -0,0 +1,10 @@
++{
++  "sub": "111111111111111111111",
++  "name": "Jared Hanson",
++  "given_name": "Jared",
++  "family_name": "Hanson",
++  "picture": "https://lh3.googleusercontent.com/-XxXXxxXxXXX/AAAAAAAAAAI/AAAAAAAAAAA/0000xxxxx0X/photo.jpg",
++  "email": "example@gmail.com",
++  "verified_email": true,
++  "locale": "en"
++}
+diff --git a/test/profile/openid.test.js b/test/profile/openid.test.js
+index dd2f4fa..941a557 100644
+--- a/test/profile/openid.test.js
++++ b/test/profile/openid.test.js
+@@ -70,6 +70,40 @@ describe('OpenIDProfile.parse', function() {
+       expect(profile.photos[0].value).to.equal('https://lh3.googleusercontent.com/-XxXXxxXxXXX/AAAAAAAAAAI/AAAAAAAAAAA/0000xxxxx0X/photo.jpg');
+     });
+   });
++
++  describe('profile with new "id" style', function() {
++    var profile;
++
++    before(function(done) {
++      fs.readFile('test/fixtures/userinfo/userinfo-with-id.json', 'utf8', function(err, data) {
++        if (err) { return done(err); }
++        profile = Profile.parse(data);
++        done();
++      });
++    });
++
++    it('should parse profile', function() {
++      expect(profile.id).to.equal('111111111111111111112');
++    });
++  });
++
++  describe('profile with new "verified_email" style', function() {
++    var profile;
++
++    before(function(done) {
++      fs.readFile('test/fixtures/userinfo/userinfo-with-verified-email.json', 'utf8', function(err, data) {
++        if (err) { return done(err); }
++        profile = Profile.parse(data);
++        done();
++      });
++    });
++
++    it('should parse profile', function() {
++      expect(profile.emails).to.have.length(1);
++      expect(profile.emails[0].value).to.equal('example@gmail.com');
++      expect(profile.emails[0].verified).to.equal(true);
++    });
++  });
+   
+   describe('profile without picture attribute', function() {
+     var profile;
+
+From a0c78c6b60988d18ef95961fe068e7f8e34992bb Mon Sep 17 00:00:00 2001
+From: Samuel Attard <samuel.r.attard@gmail.com>
+Date: Fri, 21 Dec 2018 13:34:21 +1300
+Subject: [PATCH 3/5] docs: add documentation for the Google + API removal
+
+---
+ README.md | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/README.md b/README.md
+index 159f984..dc20c79 100644
+--- a/README.md
++++ b/README.md
+@@ -85,6 +85,27 @@ app.get('/auth/google/callback',
+   });
+   ```
+ 
++#### Google Plus API Deprecation
++
++The default for `passport-google-oauth2` is to use the Google+ People API to
++get the profile information for the user signing in.  With this API being
++removed in early 2019 you should look towards using the OAuth 2 User Info
++endpoint instead.  You can switch to this endpoint using this configuration
++option.
++
++```javascript
++new GoogleStrategy({
++  clientID: GOOGLE_CLIENT_ID,
++  clientSecret: GOOGLE_CLIENT_SECRET,
++  callbackURL: "http://www.example.com/auth/google/callback",
++  // This option tells the strategy to use the userinfo endpoint instead
++  userProfileURL: "https://www.googleapis.com/oauth2/v2/userinfo",
++}
++```
++
++The structure of the `profile` object will be the same but you may get
++less profile information than you did before.
++
+ ## Examples
+ 
+ Developers using the popular [Express](http://expressjs.com/) web framework can
+
+From dcb630e39078e2a247c67714e69c02f17e52f45e Mon Sep 17 00:00:00 2001
+From: Samuel Attard <samuel.r.attard@gmail.com>
+Date: Fri, 21 Dec 2018 20:50:43 +1300
+Subject: [PATCH 4/5] fix: node 0.6 does not work on Travis anymore
+
+---
+ .travis.yml | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/.travis.yml b/.travis.yml
+index 3297dfd..bd0cd36 100644
+--- a/.travis.yml
++++ b/.travis.yml
+@@ -8,7 +8,6 @@ node_js:
+   - "0.12"
+   - "0.10"
+   - "0.8"
+-  - "0.6"
